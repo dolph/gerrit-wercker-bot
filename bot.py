@@ -36,8 +36,8 @@ class GerritClient(object):
 
     def post(self, path, params=None, headers=None, data=None):
         headers = headers or {}
-        headers['Content-Type'] = 'application/json'
         if data is not None:
+            headers['Content-Type'] = 'application/json'
             data = json.dumps(data)
         return self._request(
             'POST', path, params=params, headers=headers, data=data)
@@ -59,7 +59,7 @@ if __name__ == '__main__':
     changes = gerrit.get(
         '/changes/',
         {
-            'q': 'is:watched status:open NOT label:Verified owner:dolph',
+            'q': 'is:watched status:open NOT label:Verified',
             'o': ['LABELS', 'CURRENT_REVISION', 'DOWNLOAD_COMMANDS']
         })
     for change in changes:
@@ -122,4 +122,18 @@ if __name__ == '__main__':
                     'Verified': vote,
                 },
             }
+        )
+
+    # Merge any changes that are ready.
+    changes = gerrit.get(
+        '/changes/',
+        {
+            'q': 'is:watched status:open label:Verified+1 label:Code-Review+2',
+            'o': ['CURRENT_REVISION']
+        })
+    for change in changes:
+        gerrit.post(
+            '/changes/%(change_id)s/revisions/%(revision_id)s/submit' % {
+                'change_id': change['id'],
+                'revision_id': change['current_revision']},
         )
