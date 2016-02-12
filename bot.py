@@ -1,6 +1,9 @@
 import argparse
+import errno
 import json
+import shutil
 import subprocess
+import tempfile
 
 import requests
 
@@ -50,7 +53,31 @@ if __name__ == '__main__':
         })
     for change in changes:
         current_revision = change['revisions'][change['current_revision']]
-        checkout_cmd = current_revision['fetch']['ssh']['commands']['Checkout']
         repo = current_revision['fetch']['ssh']['url']
-        debug(checkout_cmd)
-        debug(repo)
+        ref = current_revision['fetch']['ssh']['ref']
+
+        test_commands = [
+            ['git', 'clone', repo, '.'],
+            ['git', 'fetch', repo, ref],
+            ['git', 'checkout', 'FETCH_HEAD'],
+            ['wercker', 'build'],
+        ]
+
+        # Innocent until proven guilty.
+        build_succeeded = True
+
+        try:
+            temp_dir = tempfile.mkdtemp()
+
+            for command in test_commands:
+                print('$ %s' % ' '.join(command))
+                subprocess.check_call(command, cwd=temp_dir)
+        except Exception:
+            build_succeeded = False
+        finally:
+            try:
+                shutil.rmtree(temp_dir)  # delete directory
+            except OSError as exc:
+                # Ensure the directory isn't already gone before re-raising.
+                if exc.errno != errno.ENOENT:
+                    raise
