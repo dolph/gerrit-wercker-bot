@@ -5,18 +5,19 @@ import subprocess
 import requests
 
 
-ENDPOINT = 'https://review.gerrithub.io/a'
+ENDPOINT = 'https://%(host)s/a'
 
 
 class GerritClient(object):
-    def __init__(self, http_username, http_password):
+    def __init__(self, host, username, password):
         self.session = requests.Session()
-        self.session.auth = (http_username, http_password)
+        self.endpoint = ENDPOINT % {'host': host}
+        self.session.auth = (username, password)
 
     def _request(self, method, path, params=None):
         request = requests.Request(
             method,
-            ENDPOINT + path,
+            self.endpoint + path,
             params=params)
         prepped = self.session.prepare_request(request)
         print('%s %s' % (prepped.method, prepped.url))
@@ -34,11 +35,12 @@ def debug(d):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('host')
     parser.add_argument('http_username')
     parser.add_argument('http_password')
     args = parser.parse_args()
 
-    gerrit = GerritClient(args.http_username, args.http_password)
+    gerrit = GerritClient(args.host, args.http_username, args.http_password)
 
     changes = gerrit.get(
         '/changes/',
