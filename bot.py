@@ -17,11 +17,13 @@ class GerritClient(object):
         self.endpoint = ENDPOINT % {'host': host}
         self.session.auth = (username, password)
 
-    def _request(self, method, path, params=None):
+    def _request(self, method, path, headers=None, data=None, params=None):
         request = requests.Request(
             method,
             self.endpoint + path,
-            params=params)
+            params=params,
+            headers=headers,
+            data=data)
         prepped = self.session.prepare_request(request)
         print('%s %s' % (prepped.method, prepped.url))
         response = self.session.send(prepped)
@@ -29,7 +31,15 @@ class GerritClient(object):
         return json.loads(response.text.split('\n', 1)[1])
 
     def get(self, path, params=None):
-        return self._request('GET', path, params)
+        return self._request('GET', path, params=params)
+
+    def post(self, path, params=None, headers=None, data=None):
+        headers = headers or {}
+        headers['Content-Type'] = 'application/json'
+        if data is not None:
+            data = json.dumps(data)
+        return self._request(
+            'POST', path, params=params, headers=headers, data=data)
 
 
 def debug(d):
@@ -48,7 +58,7 @@ if __name__ == '__main__':
     changes = gerrit.get(
         '/changes/',
         {
-            'q': 'is:watched status:open NOT label:Verified>=-1',
+            'q': 'is:watched status:open NOT label:Verified',
             'o': ['LABELS', 'CURRENT_REVISION', 'DOWNLOAD_COMMANDS']
         })
     for change in changes:
@@ -81,3 +91,17 @@ if __name__ == '__main__':
                 # Ensure the directory isn't already gone before re-raising.
                 if exc.errno != errno.ENOENT:
                     raise
+
+        message = 'Build succeeded.' if build_succeeded else 'Build failed.'
+        vote = 1 if build_succeeded else -1
+        gerrit.post(
+            '/changes/%(change_id)s/revisions/%(revision_id)s/review/' % {
+                'change_id': change['id'],
+                'revision_id': change['current_revision']},
+            data={
+                'message': message,
+                'labels': {
+                    'Verified': vote,
+                },
+            }
+        )
