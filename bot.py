@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import time
 
 import pasteraw
 import requests
@@ -47,15 +48,7 @@ def debug(d):
     print(json.dumps(d, indent=4, sort_keys=True))
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('host')
-    parser.add_argument('http_username')
-    parser.add_argument('http_password')
-    args = parser.parse_args()
-
-    gerrit = GerritClient(args.host, args.http_username, args.http_password)
-
+def main(gerrit):
     changes = gerrit.get(
         '/changes/',
         {
@@ -137,3 +130,20 @@ if __name__ == '__main__':
                 'change_id': change['id'],
                 'revision_id': change['current_revision']},
         )
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('host')
+    parser.add_argument('http_username')
+    parser.add_argument('http_password')
+    args = parser.parse_args()
+
+    gerrit = GerritClient(args.host, args.http_username, args.http_password)
+
+    try:
+        while True:
+            main(gerrit)
+            time.sleep(60)
+    except KeyboardInterrupt:
+        pass
