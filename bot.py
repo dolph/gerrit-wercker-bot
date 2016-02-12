@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tempfile
 
+import pasteraw
 import requests
 
 
@@ -58,7 +59,7 @@ if __name__ == '__main__':
     changes = gerrit.get(
         '/changes/',
         {
-            'q': 'is:watched status:open NOT label:Verified',
+            'q': 'is:watched status:open NOT label:Verified owner:dolph',
             'o': ['LABELS', 'CURRENT_REVISION', 'DOWNLOAD_COMMANDS']
         })
     for change in changes:
@@ -76,14 +77,24 @@ if __name__ == '__main__':
         # Innocent until proven guilty.
         build_succeeded = True
 
+        # Capture stdout and stderr for uploading later.
+        output = ''
+
         try:
             temp_dir = tempfile.mkdtemp()
 
             for command in test_commands:
-                print('$ %s' % ' '.join(command))
-                subprocess.check_call(command, cwd=temp_dir)
-        except Exception:
-            build_succeeded = False
+                output += '$ %s\n' % ' '.join(command)
+                process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    cwd=temp_dir)
+                (stdout, stderr) = process.communicate()
+                output += stdout
+                if process.returncode != 0:
+                    build_succeeded = False
+                    break
         finally:
             try:
                 shutil.rmtree(temp_dir)  # delete directory
@@ -92,7 +103,13 @@ if __name__ == '__main__':
                 if exc.errno != errno.ENOENT:
                     raise
 
-        message = 'Build succeeded.' if build_succeeded else 'Build failed.'
+        c = pasteraw.Client()
+        url = c.create_paste(output)
+
+        message = 'Build %(status)s: %(url)s' % {
+            'status': 'succeeded' if build_succeeded else 'failed',
+            'url': url,
+        }
         vote = 1 if build_succeeded else -1
         gerrit.post(
             '/changes/%(change_id)s/revisions/%(revision_id)s/review/' % {
