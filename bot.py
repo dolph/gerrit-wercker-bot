@@ -71,6 +71,7 @@ if __name__ == '__main__':
             ['git', 'clone', repo, '.'],
             ['git', 'fetch', repo, ref],
             ['git', 'checkout', 'FETCH_HEAD'],
+            ['git', 'rebase', 'master'],
             ['wercker', 'build'],
         ]
 
