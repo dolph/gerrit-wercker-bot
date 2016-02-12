@@ -1,3 +1,4 @@
+import argparse
 import json
 import subprocess
 
@@ -19,7 +20,7 @@ class GerritClient(object):
             params=params)
         prepped = self.session.prepare_request(request)
         print('%s %s' % (prepped.method, prepped.url))
-        response = SESSION.send(prepped)
+        response = self.session.send(prepped)
         response.raise_for_status()
         return json.loads(response.text.split('\n', 1)[1])
 
