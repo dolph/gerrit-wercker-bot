@@ -52,7 +52,7 @@ def main(gerrit):
     changes = gerrit.get(
         '/changes/',
         {
-            'q': 'is:watched status:open NOT label:Verified',
+            'q': 'is:watched status:open NOT label:Verified>=-1',
             'o': ['LABELS', 'CURRENT_REVISION', 'DOWNLOAD_COMMANDS']
         })
     for change in changes:
