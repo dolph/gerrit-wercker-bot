@@ -1,6 +1,7 @@
 import argparse
 import errno
 import json
+import logging
 import shutil
 import subprocess
 import tempfile
@@ -9,6 +10,9 @@ import time
 import pasteraw
 import requests
 
+
+LOG = logging.getLogger(__name__)
+LOG.setLevel(logging.INFO)
 
 ENDPOINT = 'https://%(host)s/a'
 
@@ -27,7 +31,7 @@ class GerritClient(object):
             headers=headers,
             data=data)
         prepped = self.session.prepare_request(request)
-        print('%s %s' % (prepped.method, prepped.url))
+        LOG.debug('%s %s' % (prepped.method, prepped.url))
         response = self.session.send(prepped)
         response.raise_for_status()
         return json.loads(response.text.split('\n', 1)[1])
@@ -45,7 +49,7 @@ class GerritClient(object):
 
 
 def debug(d):
-    print(json.dumps(d, indent=4, sort_keys=True))
+    LOG.debug(json.dumps(d, indent=4, sort_keys=True))
 
 
 def main(gerrit):
@@ -59,6 +63,8 @@ def main(gerrit):
         current_revision = change['revisions'][change['current_revision']]
         repo = current_revision['fetch']['ssh']['url']
         ref = current_revision['fetch']['ssh']['ref']
+
+        LOG.info('Testing %s %s' % (repo, ref))
 
         test_commands = [
             ['git', 'clone', repo, '.'],
@@ -105,6 +111,9 @@ def main(gerrit):
             'url': url,
         }
         vote = 1 if build_succeeded else -1
+
+        LOG.info(message)
+
         gerrit.post(
             '/changes/%(change_id)s/revisions/%(revision_id)s/review/' % {
                 'change_id': change['id'],
@@ -125,6 +134,7 @@ def main(gerrit):
             'o': ['CURRENT_REVISION']
         })
     for change in changes:
+        LOG.info('Merging %s' % change['id'])
         gerrit.post(
             '/changes/%(change_id)s/revisions/%(revision_id)s/submit' % {
                 'change_id': change['id'],
@@ -143,7 +153,10 @@ if __name__ == '__main__':
 
     try:
         while True:
-            main(gerrit)
+            try:
+                main(gerrit)
+            except Exception as e:
+                LOG.exception('Exception in main loop, sleeping and retrying.')
             time.sleep(60)
     except KeyboardInterrupt:
         pass
