@@ -49,7 +49,85 @@ class GerritClient(object):
 
 
 def debug(d):
-    LOG.debug(json.dumps(d, indent=4, sort_keys=True))
+    print(json.dumps(d, indent=4, sort_keys=True))
+
+
+def test_change(change):
+    current_revision = change['revisions'][change['current_revision']]
+    repo = current_revision['fetch']['ssh']['url']
+    ref = current_revision['fetch']['ssh']['ref']
+
+    LOG.info('Testing %s %s' % (repo, ref))
+
+    test_commands = [
+        ['git', 'clone', repo, '.'],
+        ['git', 'fetch', repo, ref],
+        ['git', 'checkout', 'FETCH_HEAD'],
+        ['git', 'rebase', 'master'],
+        ['wercker', 'build'],
+    ]
+
+    # Innocent until proven guilty.
+    build_succeeded = True
+
+    # Capture stdout and stderr for uploading later.
+    output = ''
+
+    # Capture the runtime of all shell commands.
+    start_time = time.time()
+
+    try:
+        temp_dir = tempfile.mkdtemp()
+
+        for command in test_commands:
+            output += '$ %s\n' % ' '.join(command)
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=temp_dir)
+            (stdout, stderr) = process.communicate()
+            output += stdout
+            if process.returncode != 0:
+                build_succeeded = False
+                break
+    finally:
+        try:
+            shutil.rmtree(temp_dir)  # delete directory
+        except OSError as exc:
+            # Ensure the directory isn't already gone before re-raising.
+            if exc.errno != errno.ENOENT:
+                raise
+
+    # Calculate total elapsed runtime of the build (in seconds).
+    elapsed_seconds = round(time.time() - start_time)
+
+    c = pasteraw.Client()
+    url = c.create_paste(output)
+
+    message = 'Build %(status)s (%(min)dm %(sec)ds): %(url)s' % {
+        'status': 'succeeded' if build_succeeded else 'failed',
+        'min': elapsed_seconds / 60,
+        'sec': elapsed_seconds % 60,
+        'url': url,
+    }
+    vote = 1 if build_succeeded else -1
+
+    LOG.info(message)
+
+    gerrit.post(
+        '/changes/%(change_id)s/revisions/%(revision_id)s/review/' % {
+            'change_id': change['id'],
+            'revision_id': change['current_revision']},
+        data={
+            'message': message,
+            'labels': {
+                'Verified': vote,
+            },
+        }
+    )
+
+    return build_succeeded
 
 
 def main(gerrit):
@@ -60,86 +138,32 @@ def main(gerrit):
             'o': ['LABELS', 'CURRENT_REVISION', 'DOWNLOAD_COMMANDS']
         })
     for change in changes:
-        current_revision = change['revisions'][change['current_revision']]
-        repo = current_revision['fetch']['ssh']['url']
-        ref = current_revision['fetch']['ssh']['ref']
+        test_change(change)
 
-        LOG.info('Testing %s %s' % (repo, ref))
-
-        test_commands = [
-            ['git', 'clone', repo, '.'],
-            ['git', 'fetch', repo, ref],
-            ['git', 'checkout', 'FETCH_HEAD'],
-            ['git', 'rebase', 'master'],
-            ['wercker', 'build'],
-        ]
-
-        # Innocent until proven guilty.
-        build_succeeded = True
-
-        # Capture stdout and stderr for uploading later.
-        output = ''
-
-        try:
-            temp_dir = tempfile.mkdtemp()
-
-            for command in test_commands:
-                output += '$ %s\n' % ' '.join(command)
-                process = subprocess.Popen(
-                    command,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    cwd=temp_dir)
-                (stdout, stderr) = process.communicate()
-                output += stdout
-                if process.returncode != 0:
-                    build_succeeded = False
-                    break
-        finally:
-            try:
-                shutil.rmtree(temp_dir)  # delete directory
-            except OSError as exc:
-                # Ensure the directory isn't already gone before re-raising.
-                if exc.errno != errno.ENOENT:
-                    raise
-
-        c = pasteraw.Client()
-        url = c.create_paste(output)
-
-        message = 'Build %(status)s: %(url)s' % {
-            'status': 'succeeded' if build_succeeded else 'failed',
-            'url': url,
-        }
-        vote = 1 if build_succeeded else -1
-
-        LOG.info(message)
-
-        gerrit.post(
-            '/changes/%(change_id)s/revisions/%(revision_id)s/review/' % {
-                'change_id': change['id'],
-                'revision_id': change['current_revision']},
-            data={
-                'message': message,
-                'labels': {
-                    'Verified': vote,
-                },
-            }
-        )
+        # Only test one change at a time; this keeps us from having to
+        # understand the gerrit API too well.
+        break
 
     # Merge any changes that are ready.
     changes = gerrit.get(
         '/changes/',
         {
             'q': 'is:watched status:open label:Verified+1 label:Code-Review+2',
-            'o': ['CURRENT_REVISION']
+            'o': ['LABELS', 'CURRENT_REVISION', 'DOWNLOAD_COMMANDS']
         })
+    merge_path = '/changes/%(change_id)s/revisions/%(revision_id)s/submit'
     for change in changes:
-        LOG.info('Merging %s' % change['id'])
-        gerrit.post(
-            '/changes/%(change_id)s/revisions/%(revision_id)s/submit' % {
-                'change_id': change['id'],
-                'revision_id': change['current_revision']},
-        )
+        if change['submittable'] and test_change(change):
+            LOG.info('Merging %s' % change['id'])
+            try:
+                gerrit.post(
+                    merge_path % {
+                        'change_id': change['id'],
+                        'revision_id': change['current_revision']},
+                )
+            except requests.HTTPError as e:
+                LOG.info('Failed to merge due to %s %s' % (
+                    e.response.status_code, e.response.reason))
 
 
 if __name__ == '__main__':
