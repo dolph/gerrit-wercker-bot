@@ -71,7 +71,7 @@ def test_change(change):
     build_succeeded = True
 
     # Capture stdout and stderr for uploading later.
-    output = ''
+    output = b''
 
     # Capture the runtime of all shell commands.
     start_time = time.time()
@@ -87,10 +87,14 @@ def test_change(change):
                 stderr=subprocess.STDOUT,
                 cwd=temp_dir)
             (stdout, stderr) = process.communicate()
-            output += stdout
+            output += stdout.encode('utf-8')
+
             if process.returncode != 0:
                 build_succeeded = False
                 break
+    except Exception as e:
+        build_succeeded = False
+        output += e
     finally:
         try:
             shutil.rmtree(temp_dir)  # delete directory
@@ -137,12 +141,11 @@ def main(gerrit):
             'q': 'is:watched status:open NOT label:Verified>=-1',
             'o': ['LABELS', 'CURRENT_REVISION', 'DOWNLOAD_COMMANDS']
         })
-    for change in changes:
-        test_change(change)
-
-        # Only test one change at a time; this keeps us from having to
-        # understand the gerrit API too well.
-        break
+    if changes:
+        try:
+            test_change(changes[-1])
+        except Exception as e:
+            LOG.exception('Exception testing change.')
 
     # Merge any changes that are ready.
     changes = gerrit.get(
@@ -152,8 +155,21 @@ def main(gerrit):
             'o': ['LABELS', 'CURRENT_REVISION', 'DOWNLOAD_COMMANDS']
         })
     merge_path = '/changes/%(change_id)s/revisions/%(revision_id)s/submit'
+    if changes:
+        changes.reverse()
     for change in changes:
-        if change['submittable'] and test_change(change):
+        if not change['submittable']:
+            continue
+
+        LOG.info(change)
+
+        try:
+            build_succeeded = test_change(change)
+        except Exception as e:
+            LOG.exception('Exception testing change.')
+            continue
+
+        if build_succeeded:
             LOG.info('Merging %s' % change['id'])
             try:
                 gerrit.post(
